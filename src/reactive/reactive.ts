@@ -10,7 +10,7 @@ const effectStack: IFnWrap[] = []
 export function useEffect(fn: Function, options: IOptions = {}) {
   // 对fn进行包装，让activeFn指向fnWrap
   // 原先指向fn的时候，只能调用fn，包装可以做额外的事
-  function fnWrap<IFnWrap>() {
+  function fnWrap() {
     cleanup(fnWrap)
     activeFn = fnWrap
     effectStack.push(fnWrap)
@@ -34,7 +34,7 @@ export function useEffect(fn: Function, options: IOptions = {}) {
 
 /* 响应式对象 */
 const depsMap = new WeakMap<Object, Map<string, Set<Function>>>()
-// 追踪依赖
+// 追踪、收集依赖
 function track(target: Object, p: string) {
   if (!activeFn) return
   let targetMap = depsMap.get(target)
@@ -86,17 +86,49 @@ function cleanup(fnWrap: any) {
 export function useReactive<T extends object>(obj: T): T {
   return new Proxy(obj, {
     // 触发器，收集依赖
-    get(target, p: string) {
+    get(target: any, p: string) {
       track(target, p)
-      // @ts-ignore
       return target[p]
     },
     // 取出并执行依赖
     set(target, p: string, newValue) {
-      // @ts-ignore
       target[p] = newValue
       trigger(target, p)
       return true
     },
   })
+}
+
+interface IComputed {
+  value: any
+}
+/**
+ * 计算属性
+ * @param getter 
+ * @returns 
+ */
+export function useComputed(getter: Function): IComputed {
+  // 缓存上次计算的值
+  let cache: any
+  // 只有发生改变时才再次计算
+  let isChange = true
+  const effect = useEffect(getter, {
+    lazy: true, // 不立即执行
+    scheduler() {
+      // 当getter被执行时，意味着发生了改变
+      isChange = true
+    }
+  })
+  const obj = {
+    get value() {
+      if (isChange) {
+        // 执行effect相当于执行传入的getter函数
+        // 拿到用户在getter里的返回值
+        cache = effect()
+        isChange = false
+      }
+      return cache
+    }
+  }
+  return obj
 }
