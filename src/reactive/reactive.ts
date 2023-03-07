@@ -132,3 +132,50 @@ export function useComputed(getter: Function): IComputed {
   }
   return obj
 }
+
+type Callback = (newVal: any, oldValue: any) => void;
+let oldValue: any, newValue
+/**
+ * watch
+ * @param source 可以是getter，也可以是响应式对象
+ * @param callback 用户自定义的处理函数
+ */
+export function watch(source: Function | Object, callback: Callback) {
+  const effectFn = useEffect(() => {
+    // 触发get
+    if (typeof (source) === 'function') {
+      source()
+    } else {
+      traverse(source)
+    }
+  }, {
+    lazy: true,
+    scheduler() {
+      newValue = effectFn()
+      // 监听set，当触发set时调用回调函数
+      callback(newValue, oldValue)
+      // 更新旧值
+      oldValue = newValue
+    }
+  })
+  // 手动调用effectFn，拿到的值就是旧值
+  oldValue = effectFn()
+}
+
+/**
+ * 递归遍历对象的每一个属性，并触发getter，收集依赖
+ * @param value 
+ * @param seen 
+ * @returns 
+ */
+function traverse(value: any, seen = new Set()) {
+  if (typeof (value) !== 'object' || value === null || seen.has(value)) {
+    return
+  }
+  // 避免循环引用
+  seen.add(value)
+  for (const key in value) {
+    traverse(value[key], seen)
+  }
+  return value
+}
