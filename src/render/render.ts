@@ -75,6 +75,7 @@ function patchProps(element: IContainer, prop: string, prevValue: any, nextValue
     // 以on开头的都认为是事件
     // 获取事件名称，例如onClick -> click
     const eventName = prop.substring(2).toLowerCase()
+    element.removeEventListener(eventName, nextValue)
     element.addEventListener(eventName, nextValue)
   } else if (prop in element) {
     // 检查创建的html元素有没有这个DOM Properties

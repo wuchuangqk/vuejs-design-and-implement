@@ -41,6 +41,7 @@ useEffect(fetchData)
 function test(type: number) {
   let newsList: string[] = []
   if (type === 1) {
+    console.log('1')
     newsList = [
       '政协委员何超琼：我是大湾区人热',
       '秦刚：美要中国打不还手我们办不到热',
