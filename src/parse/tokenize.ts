@@ -7,11 +7,21 @@ const State = {
   text: 4, // 文本状态
   tagEnd: 5, // 标签结束状态
   tagEndName: 6, // 标签结束名称状态
+  expressionStart: 7, // 表达式开始标签
+  expressionEnd: 8, // 表达式结束标签
+  expressionText: 9, // 表达式里的内容
 }
 
 // 判断是否是字母
 function isAlpha(char: string) {
-  return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z'
+  return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char === '.'
+}
+
+export const TOKEN_TYPE = {
+  TEXT: 'text', // 文本
+  TAG_END: 'tagEnd', // 结束标签
+  TAG: 'tag', // 标签名称
+  VARIABLE: 'variable', // 表达式里的变量
 }
 
 // 解析为token
@@ -38,6 +48,9 @@ export function tokenize(str: string) {
           currentState = State.text
           // 缓存到chars数组
           chars.push(char)
+        } else if (char === '{') {
+          // 表达式开始标签
+          currentState = State.expressionStart
         }
         break
       // 标签开始状态
@@ -59,7 +72,7 @@ export function tokenize(str: string) {
           currentState = State.initial
           // 此时chars数组中记录的字符就是标签名称
           tokens.push({
-            type: 'tag',
+            type: TOKEN_TYPE.TAG,
             name: chars.join('')
           })
           // 清空chars
@@ -74,7 +87,7 @@ export function tokenize(str: string) {
           currentState = State.initial
           // 保存结束标签名称
           tokens.push({
-            type: 'tagEnd',
+            type: TOKEN_TYPE.TAG_END,
             name: chars.join('')
           })
           chars.length = 0
@@ -87,7 +100,7 @@ export function tokenize(str: string) {
         } else if (char === '<') {
           currentState = State.tagStart
           tokens.push({
-            type: 'text',
+            type: TOKEN_TYPE.TEXT,
             content: chars.join('')
           })
           chars.length = 0
@@ -100,6 +113,27 @@ export function tokenize(str: string) {
           chars.push(char)
         }
         break
+      // 表达式开始状态
+      case State.expressionStart:
+        if (isAlpha(char)) {
+          chars.push(char)
+          currentState = State.expressionText
+        }
+        break
+      case State.expressionText:
+        // 表达式里的内容状态
+        if (char === '}') {
+          // 表达式闭合了，状态切换到初始状态
+          currentState = State.initial
+          // 记录变量名称
+          tokens.push({
+            type: TOKEN_TYPE.VARIABLE,
+            content: chars.join('')
+          })
+          chars.length = 0
+        } else if (isAlpha(char)) {
+          chars.push(char)
+        }
     }
   }
   return tokens

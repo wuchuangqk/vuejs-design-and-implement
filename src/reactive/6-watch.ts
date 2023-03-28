@@ -1,4 +1,4 @@
-import { useEffect, useReactive } from './reactive.js'
+import { useEffect, useReactive } from './reactive'
 let oldValue: any, newValue
 function watch(source: any, callback: Function) {
   // 注册副作用函数并立即执行

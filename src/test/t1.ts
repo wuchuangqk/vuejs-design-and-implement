@@ -1,4 +1,4 @@
-import { useEffect, useReactive } from '../reactive/reactive.js'
+import { useEffect, useReactive } from '../reactive/reactive'
 
 // 注册拦截get set的方法
 const obj = useReactive({

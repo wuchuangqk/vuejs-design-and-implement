@@ -4,11 +4,12 @@
 		{
 			"type": "typescript",
 			"tsconfig": "tsconfig.json",
+			"option": "watch",
 			"problemMatcher": [
-				"$tsc"
+				"$tsc-watch"
 			],
 			"group": "build",
-			"label": "tsc: 构建 - tsconfig.json"
+			"label": "tsc: 监视 - tsconfig.json"
 		}
 	]
 }
