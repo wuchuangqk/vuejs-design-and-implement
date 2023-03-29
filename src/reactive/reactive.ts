@@ -1,3 +1,9 @@
+const TriggerType = {
+  SET: 'SET', // 改变属性的值
+  ADD: 'ADD', // 添加新属性
+  DELETE: 'DELETE', // 删除属性
+}
+
 /* 副作用函数 */
 let activeFnWrap: Function | any
 // 副作用栈，始终让activeFnWrap处于栈底，也就是数组的最后一项
@@ -39,9 +45,9 @@ export function useEffect(fn: Function, options: IOptions = {}) {
 }
 
 /* 响应式对象 */
-const depsMap = new WeakMap<Object, Map<string, Set<Function>>>()
+const depsMap = new WeakMap<Object, Map<string | symbol, Set<Function>>>()
 // 追踪、收集依赖
-function track(target: Object, p: string) {
+function track(target: Object, p: string | symbol) {
   if (!activeFnWrap) return
   let targetMap = depsMap.get(target)
   if (typeof (targetMap) === 'undefined') {
@@ -58,26 +64,39 @@ function track(target: Object, p: string) {
   fnSets.add(activeFnWrap)
   activeFnWrap.depSets.push(fnSets)
 }
-// 触发依赖
-function trigger(target: Object, p: string) {
+/**
+ * 触发依赖
+ * @param target 被代理的对象
+ * @param p 被更改的属性
+ * @param triggerType 是添加新属性还是修改已有的属性
+ */
+function trigger(target: Object, p: string, triggerType: string) {
   const targetMap = depsMap.get(target)
-  if (typeof (targetMap) !== 'undefined') {
-    const fnSets = targetMap.get(p)
+  if (typeof (targetMap) === 'undefined') return
+  let fnArr: IFnWrap[] = []
+  // 从targetMap里取出这个字段的依赖集合
+  let fnSets = targetMap.get(p)
+  if (fnSets) {
+    fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
+  }
+  if (triggerType === TriggerType.ADD || triggerType === TriggerType.DELETE) {
+    // 取出ITERATE_KEY的依赖集合
+    fnSets = targetMap.get(ITERATE_KEY)
     if (fnSets) {
-      const arr = Array.from(fnSets) as IFnWrap[]
-      arr.forEach((fn: IFnWrap) => {
-        if (fn !== activeFnWrap) {
-          // 用户自定义调度器
-          if (fn.options.scheduler) {
-            fn.options.scheduler(fn)
-          } else {
-            // 直接执行
-            fn()
-          }
-        }
-      })
+      fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
     }
   }
+  fnArr.forEach((fn: IFnWrap) => {
+    if (fn !== activeFnWrap) {
+      // 用户自定义调度器
+      if (fn.options.scheduler) {
+        fn.options.scheduler(fn)
+      } else {
+        // 直接执行
+        fn()
+      }
+    }
+  })
 }
 // 从fnWrap的所有依赖集合中移除activeFnWrap
 function cleanupDeps(fnWrap: any) {
@@ -88,30 +107,78 @@ function cleanupDeps(fnWrap: any) {
   // 清空depSets，依赖集合依然存在，所以要从依赖集合里把activeFnWrap移除掉
   fnWrap.depSets.length = 0
 }
+const ITERATE_KEY = Symbol()
 /**
  * 将对象包装成响应式
  * @param obj 
  * @returns 
  */
-export function useReactive<T extends object>(obj: T): T {
+function createReactive<T extends object>(obj: T, isShallow: boolean = false): T {
   return new Proxy(obj, {
     // 触发器，收集依赖
     get(target: any, p: string, receiver: any) {
+      // 私有属性_raw，返回代理对象的原始对象
+      if (p === '_raw') {
+        return target
+      }
       track(target, p)
-      return Reflect.get(target, p, receiver)
+      const result = Reflect.get(target, p, receiver)
+      // 浅层级
+      if (isShallow) {
+        return result
+      }
+      // console.log();
+      
+      // 递归代理深层次属性
+      if (typeof result === 'object' && result !== null) {
+        return createReactive(result)
+      }
+      return result
     },
     // 取出并执行依赖
-    set(target, p: string, newValue) {
-      target[p] = newValue
-      trigger(target, p)
-      return true
+    set(target, p: string, newValue, receiver) {
+      // 判断是添加新属性还是修改已有的属性
+      const triggerType: string = Object.prototype.hasOwnProperty.call(target, p) ? TriggerType.SET : TriggerType.ADD
+      const result = Reflect.set(target, p, newValue, receiver)
+      // 只有当receiver是target的代理对象时，才触发依赖
+      if (target === receiver._raw) {
+        // 只有赋新值才触发依赖
+        if (triggerType === TriggerType.SET) {
+          // 处理NaN(两个NaN是不相等的)
+          if (newValue !== target[p] && !(isNaN(newValue) && isNaN(target[p]))) {
+            trigger(target, p, triggerType)
+          }
+        } else {
+          trigger(target, p, triggerType)
+        }
+      }
+      return result
     },
     // 拦截has访问器，用于 'name' in obj
     has(target, p: string) {
       track(target, p)
       return Reflect.has(target, p)
     },
+    ownKeys(target) {
+      track(target, ITERATE_KEY)
+      return Reflect.ownKeys(target)
+    },
+    deleteProperty(target, p: string) {
+      // 检查对象里有没有这个属性
+      const hasKey = Object.prototype.hasOwnProperty.call(target, p)
+      const result = Reflect.deleteProperty(target, p)
+      if (hasKey && result) {
+        trigger(target, p, TriggerType.DELETE)
+      }
+      return result
+    },
   })
+}
+export function useReactive<T extends object>(obj: T): T {
+  return createReactive(obj)
+}
+export function useShallowReactive<T extends object>(obj: T): T {
+  return createReactive(obj, true)
 }
 
 interface IComputed {
