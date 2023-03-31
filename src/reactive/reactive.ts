@@ -73,19 +73,32 @@ function track(target: Object, p: string | symbol) {
 function trigger(target: Object, p: string, triggerType: string) {
   const targetMap = depsMap.get(target)
   if (typeof (targetMap) === 'undefined') return
+
   let fnArr: IFnWrap[] = []
-  // 从targetMap里取出这个字段的依赖集合
-  let fnSets = targetMap.get(p)
-  if (fnSets) {
-    fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
-  }
-  if (triggerType === TriggerType.ADD || triggerType === TriggerType.DELETE) {
-    // 取出ITERATE_KEY的依赖集合
-    fnSets = targetMap.get(ITERATE_KEY)
+  // 处理数组
+  if (Array.isArray(target)) {
+    if (triggerType === TriggerType.ADD) {
+      let fnSets = targetMap.get('length')
+      if (fnSets) {
+        fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
+      }
+    }
+  } else {
+    // 处理对象
+    // 从targetMap里取出这个字段的依赖集合
+    let fnSets = targetMap.get(p)
     if (fnSets) {
       fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
     }
+    if (triggerType === TriggerType.ADD || triggerType === TriggerType.DELETE) {
+      // 取出ITERATE_KEY的依赖集合
+      fnSets = targetMap.get(ITERATE_KEY)
+      if (fnSets) {
+        fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
+      }
+    }
   }
+
   fnArr.forEach((fn: IFnWrap) => {
     if (fn !== activeFnWrap) {
       // 用户自定义调度器
@@ -137,7 +150,15 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
     set(target, p: string, newValue, receiver) {
       const oldValue = target[p]
       // 判断是添加新属性还是修改已有的属性
-      const triggerType: string = Object.prototype.hasOwnProperty.call(target, p) ? TriggerType.SET : TriggerType.ADD
+      let triggerType = ''
+      // 处理数组
+      if (Array.isArray(target)) {
+        // 设置的索引小于数组长度视为赋值操作，大于数组长度视为新增操作
+        triggerType = Number(p) < target.length ? TriggerType.SET : TriggerType.ADD
+      } else {
+        // 处理对象
+        triggerType = Object.prototype.hasOwnProperty.call(target, p) ? TriggerType.SET : TriggerType.ADD
+      }
       const result = Reflect.set(target, p, newValue, receiver)
       // 只有当receiver是target的代理对象时，才触发依赖
       if (target === receiver._raw) {

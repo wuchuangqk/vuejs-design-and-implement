@@ -1,36 +1,31 @@
-import { useEffect, useReactive, useShallowReactive } from '../reactive/reactive'
+import { useEffect, useReactive } from '../reactive/reactive'
 import { render } from '../render/render'
 
-const obj1 = useReactive({ child: { name: '深' } })
-const obj2 = useShallowReactive({ child: { name: '浅' } })
+const tableData = useReactive([{ name: '张三' }])
 
 useEffect(() => {
-  console.log('执行了', obj1.child.name)
-  console.log('执行了', obj2.child.name)
-})
-render(
-  {
-    type: 'div',
-    children: [
-      {
-        type: 'button',
-        props: {
-          onClick() {
-            obj1.child.name = '深-改'
-          }
-        },
-        children: 'obj1',
-      },
-      {
-        type: 'button',
-        props: {
-          onClick() {
-            obj2.child = {
-              name: '浅-改'
+  render(
+    {
+      type: 'div',
+      children: [
+        {
+          type: 'ul',
+          children: [
+            {
+              type: 'li',
+              children: `姓名：${tableData[0].name}`
             }
-          }
+          ]
         },
-        children: 'obj2',
-      }
-    ]
-  }, document.getElementById('app') as any)
+        {
+          type: 'button',
+          props: {
+            onClick() {
+              tableData.push({ name: '李四' })
+            }
+          },
+          children: 'obj1',
+        },
+      ]
+    }, document.getElementById('app') as any)
+})
