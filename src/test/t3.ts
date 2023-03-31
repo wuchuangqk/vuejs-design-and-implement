@@ -1,14 +1,13 @@
 import { useEffect, useReactive, useShallowReactive } from '../reactive/reactive'
 import { render } from '../render/render'
 
-const obj1 = useReactive({ child: { name: 1 } })
-const obj2 = useShallowReactive({ child: { name: 1 } })
+const obj1 = useReactive({ child: { name: '深' } })
+const obj2 = useShallowReactive({ child: { name: '浅' } })
 
 useEffect(() => {
   console.log('执行了', obj1.child.name)
   console.log('执行了', obj2.child.name)
 })
-
 render(
   {
     type: 'div',
@@ -17,7 +16,7 @@ render(
         type: 'button',
         props: {
           onClick() {
-            obj1.child.name = 2
+            obj1.child.name = '深-改'
           }
         },
         children: 'obj1',
@@ -26,7 +25,9 @@ render(
         type: 'button',
         props: {
           onClick() {
-            obj2.child.name = 2
+            obj2.child = {
+              name: '浅-改'
+            }
           }
         },
         children: 'obj2',

@@ -127,8 +127,6 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
       if (isShallow) {
         return result
       }
-      // console.log();
-      
       // 递归代理深层次属性
       if (typeof result === 'object' && result !== null) {
         return createReactive(result)
@@ -137,6 +135,7 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
     },
     // 取出并执行依赖
     set(target, p: string, newValue, receiver) {
+      const oldValue = target[p]
       // 判断是添加新属性还是修改已有的属性
       const triggerType: string = Object.prototype.hasOwnProperty.call(target, p) ? TriggerType.SET : TriggerType.ADD
       const result = Reflect.set(target, p, newValue, receiver)
@@ -145,7 +144,7 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
         // 只有赋新值才触发依赖
         if (triggerType === TriggerType.SET) {
           // 处理NaN(两个NaN是不相等的)
-          if (newValue !== target[p] && !(isNaN(newValue) && isNaN(target[p]))) {
+          if (newValue !== oldValue && (newValue === newValue || oldValue === oldValue)) {
             trigger(target, p, triggerType)
           }
         } else {
