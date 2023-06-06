@@ -1,7 +1,7 @@
-import { render } from './render/render'
-import { useReactive, useEffect } from './reactive/reactive'
+import { render } from '../render/render'
+import { useReactive, useEffect } from '../reactive/reactive'
 
-const root = document.getElementById('app') as IContainer
+const root = document.getElementById('app') as HTMLElement
 const obj = useReactive({
   list: [] as IVnode[]
 })
@@ -39,8 +39,9 @@ useEffect(() => {
 
 function test(type: number) {
   const url = type === 1 ? 'data1' : 'data2'
-  fetch('http://localhost:4090/' + url).then(res => reson()).then(res => {
-    obj.list = res.map((val: any) => {
+  fetch('http://localhost:4090/' + url).then(async (res) => {
+    const data = await res.json()
+    obj.list = data.map((val: any) => {
       return {
         type: 'li',
         children: val.label

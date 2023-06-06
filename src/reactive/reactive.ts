@@ -1,146 +1,210 @@
-const TriggerType = {
+export const TriggerType = {
   SET: 'SET', // 改变属性的值
   ADD: 'ADD', // 添加新属性
   DELETE: 'DELETE', // 删除属性
 }
 
-/* 副作用函数 */
+// 用一个全局变量存储被注册的副作用函数
 let activeFnWrap: Function | any
-// 副作用栈，始终让activeFnWrap处于栈底，也就是数组的最后一项
+/**
+ * 副作用栈，用以修正在嵌套副作用函数下，activeFnWrap只会指向最内层副作用函数的问题
+ * 当一个副作用函数执行时，将其推入栈顶
+ * 副作用函数执行完毕后，将其从栈顶弹出
+ * a 
+ *  - b
+ *    - c
+ *  - b
+ * a
+ * 这样，activeFnWrap总是能正确的指向当前执行的副作用函数
+ */
 const effectStack: IFnWrap[] = []
 /**
  * 注册副作用函数
+ * 告诉我副作用函数是哪个，我才能知道在变量被修改时去触发哪个副作用函数
  * @param fn 用户传入的副作用函数
- * @param options 
+ * @param options 额外选项（包含调度器等）
  * @returns 
  */
 export function useEffect(fn: Function, options: IOptions = {}) {
-  // 对fn进行包装，让activeFnWrap指向fnWrap
-  // 原先指向fn的时候，只能调用fn，包装可以做额外的事
-  function fnWrap() {
-    // 每次重复执行fnWrap的时候，先把依赖清空，执行的时候再收集，避免持有多余的依赖
-    cleanupDeps(fnWrap)
-    // 记录下来当前正在执行的fnWrap
-    activeFnWrap = fnWrap
+  /**
+   * 创建一个增强版的副作用函数，来实现额外的需求
+   * @returns 原始副作用函数的返回值
+   */
+  function enhancedEffectFn() {
+    // 把副作用函数和所有与之关联的字段解除绑定关系，避免产生遗留的依赖（即字段不再与副作用函数有实际意义的关联作用了）
+    // 同理，每次执行副作用函数，都会重新为字段收集和建立依赖关系
+    cleanupDeps(enhancedEffectFn)
+    // 将这个副作用函数标识为当前活跃的副作用函数
+    activeFnWrap = enhancedEffectFn
     // 推入栈底
-    effectStack.push(fnWrap)
-    // 执行用户传入的副作用函数，获取返回值
+    effectStack.push(enhancedEffectFn)
+    // 执行原始副作用函数，获取返回值（依赖收集在这一步）
     const result = fn()
     // 执行完毕后，从栈底弹出
     effectStack.pop()
-    // 获取栈底的元素，当栈为空时，获取到的是undefined，也就是说没有正在执行的fnWrap
+    // 获取栈底的元素，当栈为空时，length - 1获取到的是undefined，也就是说没有正在执行的fnWrap
     activeFnWrap = effectStack[effectStack.length - 1]
     return result
   }
-  // 给fnWrap添加依赖收集
-  fnWrap.depSets = [] as any
+  // 添加depSets属性，用以记录包含这个增强版副作用函数的集合有哪些
+  enhancedEffectFn.depSets = [] as any
   // 添加用户自定义选项
-  fnWrap.options = options
-  // 是否立即执行
+  enhancedEffectFn.options = options
+
+  // 默认立即执行用户的副作用函数
+  // 通过添加lazy选项，可以让用户手动控制副作用函数执行的时机
   if (!options.lazy) {
-    fnWrap()
+    enhancedEffectFn()
   }
-  // 把包装后的函数返回给调用者
-  return fnWrap
+
+  // 将包装后的副作用函数返回给用户
+  // 以让用户自己决定何时来调用
+  return enhancedEffectFn
 }
 
-/* 响应式对象 */
+/**
+ * 依赖图谱(树形结构)
+ * target 对象
+ *  - field 字段
+ *    - effectFn 与字段有关联的副作用函数（在副作用函数里读取了这个字段，当改变字段的值时，也应当触发这个副作用函数）
+ * 
+ * 键：对象
+ * 值：Map
+ *  - 键：字段名称
+ *  - 值：副作用函数集合（如果有多个副作用函数都读取这个字段，触发的时候，也应当触发多个副作用函数。所以数据类型上选择用Set来存储，保证唯一不重复。）
+ * 
+ * WeakMap对比Map，当key是对象时：
+ *  - 即使对象已不再使用，Map仍保留对象的引用，所以垃圾回收器无法回收这个对象
+ *  - 而WeakMap是弱引用，不会一直保留对象的引用，垃圾回收器能及时清理掉这个对象
+ */
 const depsMap = new WeakMap<Object, Map<string | symbol, Set<Function>>>()
-// 追踪、收集依赖
-function track(target: Object, p: string | symbol) {
+
+/**
+ * 在对象的属性与副作用函数之间建立映射关系
+ * 即，当该属性触发读取操作时，将当前激活的副作用与这个字段建立联系
+ * @param target 对象
+ * @param p 属性
+ */
+export function track(target: Object, p: string | symbol) {
   if (!activeFnWrap) return
-  let targetMap = depsMap.get(target)
+
+  // 读取这个对象的依赖图谱
+  let targetMap: Map<string | symbol, Set<Function>> | undefined = depsMap.get(target)
+  // 如果未建立依赖图谱，则进行初始化
   if (typeof (targetMap) === 'undefined') {
-    targetMap = new Map()
+    targetMap = new Map<string | symbol, Set<Function>>()
     depsMap.set(target, targetMap)
   }
-  let fnSets = targetMap.get(p)
-  if (typeof (fnSets) === 'undefined') {
-    fnSets = new Set()
-    targetMap.set(p, fnSets)
+
+  // 从对象的依赖图谱里，读取这个字段关联的副作用函数集合
+  let effectFnSet: Set<Function> | undefined = targetMap.get(p)
+  // 如果未关联任何副作用函数集合，则进行初始化
+  if (typeof (effectFnSet) === 'undefined') {
+    effectFnSet = new Set<Function>()
+    targetMap.set(p, effectFnSet)
   }
-  // 给每一个字段都设置一个依赖set，当调用getter时，把当前正在活跃的FnWrap收集到字段的依赖集合里
-  // 这样当触发字段的setter时，就能从字段的依赖集合里获取到它收集了哪些副作用函数，从而可以执行这些副作用函数
-  fnSets.add(activeFnWrap)
-  activeFnWrap.depSets.push(fnSets)
+
+  // 把当前记录的副作用函数，添加到这个字段关联的副作用函数集合里。
+  effectFnSet.add(activeFnWrap)
+  // 同时，副作用函数也要记录下，它被收集到哪些集合里（哪些集合里包含这个副作用函数）
+  // 以便于后续做清理工作里，将这个副作用函数从关联的集合里删除。
+  activeFnWrap.depSets.push(effectFnSet)
 }
 /**
- * 触发依赖
+ * 触发与字段建立关联的所有副作用函数
  * @param target 被代理的对象
  * @param p 被更改的属性
  * @param triggerType 是添加新属性还是修改已有的属性
  */
-function trigger(target: Object, p: string, triggerType: string) {
+export function trigger(target: Object, p: string, triggerType: string) {
   const targetMap = depsMap.get(target)
+  // 如果这个对象没有建立依赖图谱，就不执行任何操作
   if (typeof (targetMap) === 'undefined') return
 
-  let fnArr: IFnWrap[] = []
+  let effectFnList: IFnWrap[] = []
   // 处理数组
   if (Array.isArray(target)) {
     if (triggerType === TriggerType.ADD) {
-      let fnSets = targetMap.get('length')
-      if (fnSets) {
-        fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
+      let enhancedEffectFn = targetMap.get('length')
+      if (enhancedEffectFn) {
+        effectFnList = effectFnList.concat(Array.from(enhancedEffectFn) as IFnWrap[])
       }
     }
   } else {
     // 处理对象
     // 从targetMap里取出这个字段的依赖集合
-    let fnSets = targetMap.get(p)
-    if (fnSets) {
-      fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
+    let effectFnSet = targetMap.get(p)
+    if (effectFnSet) {
+      effectFnList = effectFnList.concat(Array.from(effectFnSet) as IFnWrap[])
     }
     if (triggerType === TriggerType.ADD || triggerType === TriggerType.DELETE) {
       // 取出ITERATE_KEY的依赖集合
-      fnSets = targetMap.get(ITERATE_KEY)
-      if (fnSets) {
-        fnArr = fnArr.concat(Array.from(fnSets) as IFnWrap[])
+      effectFnSet = targetMap.get(ITERATE_KEY)
+      if (effectFnSet) {
+        effectFnList = effectFnList.concat(Array.from(effectFnSet) as IFnWrap[])
       }
     }
   }
 
-  fnArr.forEach((fn: IFnWrap) => {
-    if (fn !== activeFnWrap) {
+  effectFnList.forEach((effectFn: IFnWrap) => {
+    // 如果该副作用函数与当前正在执行的副作用函数相同，则不执行
+    // 避免无限执行，造成死循环
+    if (effectFn !== activeFnWrap) {
       // 用户自定义调度器
-      if (fn.options.scheduler) {
-        fn.options.scheduler(fn)
+      if (effectFn.options.scheduler) {
+        effectFn.options.scheduler(effectFn)
       } else {
         // 直接执行
-        fn()
+        effectFn()
       }
     }
   })
 }
-// 从fnWrap的所有依赖集合中移除activeFnWrap
+
+/**
+ * 从包含这个副作用函数的每个集合里，移除自身
+ * 换句话说，取消了和任何字段的绑定
+ * @param fnWrap 
+ */
 function cleanupDeps(fnWrap: any) {
-  fnWrap.depSets.forEach((fnSets: any) => {
-    fnSets.delete(activeFnWrap)
+  fnWrap.depSets.forEach((enhancedEffectFn: any) => {
+    enhancedEffectFn.delete(fnWrap)
   })
-  // 这里不能只清空depSets，因为depSets是保存的依赖集合的引用
-  // 清空depSets，依赖集合依然存在，所以要从依赖集合里把activeFnWrap移除掉
+  // 由于已经没有包含这个副作用函数的集合了，所以要进行清零操作
   fnWrap.depSets.length = 0
 }
+
 const ITERATE_KEY = Symbol()
 /**
- * 将对象包装成响应式
+ * 为对象设置一层代理，在读取和设置对象的每个属性时，添加额外的处理逻辑
  * @param obj 
- * @returns 
+ * @param isShallow 是否浅层次遍历，默认深层次遍历每一个属性
+ * @returns 被代理后的对象（非原对象）
  */
 function createReactive<T extends object>(obj: T, isShallow: boolean = false): T {
   return new Proxy(obj, {
-    // 触发器，收集依赖
+    /**
+     * 拦截读取操作
+     * 收集依赖
+     * @param target 被代理的对象
+     * @param p 属性(字段)名称
+     * @param receiver 
+     * @returns 
+     */
     get(target: any, p: string, receiver: any) {
-      // 私有属性_raw，返回代理对象的原始对象
+      // 自定义属性_raw，当访问这个属性时，返回原始对象
       if (p === '_raw') {
         return target
       }
+      // 追踪(收集)依赖
       track(target, p)
       const result = Reflect.get(target, p, receiver)
-      // 浅层级
+
+      // 浅层级：直接返回结果
       if (isShallow) {
         return result
       }
-      // 递归代理深层次属性
+      // 深层级：如果结果是个对象，递归对结果进行代理操作，使其也具有响应式能力
       if (typeof result === 'object' && result !== null) {
         return createReactive(result)
       }
@@ -194,102 +258,20 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
     },
   })
 }
+/**
+ * 深层次遍历对象，为每个属性设置监听事件
+ * @param obj 
+ * @returns 
+ */
 export function useReactive<T extends object>(obj: T): T {
   return createReactive(obj)
 }
+/**
+ * 浅层次遍历对象，只为第一层属性设置监听事件
+ * @param obj 
+ * @returns 
+ */
 export function useShallowReactive<T extends object>(obj: T): T {
   return createReactive(obj, true)
 }
 
-interface IComputed {
-  value: any
-}
-/**
- * 计算属性
- * @param getter 
- * @returns 
- */
-export function useComputed(getter: Function): IComputed {
-  // 缓存上次计算的值
-  let cache: any
-  // 只有发生改变时才再次计算
-  let isChange = true
-  const effect = useEffect(getter, {
-    lazy: true, // 不立即执行
-    scheduler() {
-      // 当getter被执行时，意味着发生了改变
-      isChange = true
-    }
-  })
-  const obj = {
-    get value() {
-      if (isChange) {
-        // 执行effect相当于执行传入的getter函数
-        // 拿到用户在getter里的返回值
-        cache = effect()
-        isChange = false
-      }
-      return cache
-    }
-  }
-  return obj
-}
-
-interface IWatchOptions {
-  immediate?: boolean // 立即执行
-}
-type Callback = (newVal: any, oldValue: any) => void;
-let oldValue: any, newValue
-/**
- * watch
- * @param source 可以是getter，也可以是响应式对象
- * @param callback 用户自定义的处理函数
- */
-export function watch(source: Function | Object, callback: Callback, options: IWatchOptions = {}) {
-  const job = () => {
-    newValue = effectFn()
-    // 当依赖发生变化时，调用callback
-    callback(newValue, oldValue)
-    // 更新旧值
-    oldValue = newValue
-  }
-  // 收集依赖
-  const effectFn = useEffect(() => {
-    // 触发get
-    if (typeof (source) === 'function') {
-      return source()
-    } else {
-      // 深入监听对象的每个属性
-      return traverse(source)
-    }
-  }, {
-    lazy: true,
-    scheduler: job
-  })
-  // 立即执行callback
-  if (options.immediate) {
-    job()
-  } else {
-    // 手动调用effectFn，拿到的值就是旧值
-    // 同时触发getter收集依赖
-    oldValue = effectFn()
-  }
-}
-
-/**
- * 递归遍历对象的每一个属性，并触发getter，收集依赖
- * @param value 
- * @param seen 
- * @returns 
- */
-function traverse(value: any, seen = new Set()) {
-  if (typeof (value) !== 'object' || value === null || seen.has(value)) {
-    return
-  }
-  // 避免循环引用
-  seen.add(value)
-  for (const key in value) {
-    traverse(value[key], seen)
-  }
-  return value
-}

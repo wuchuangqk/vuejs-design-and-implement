@@ -125,7 +125,7 @@ function patchChildren(currentVnode: IVnode, newVnode: IVnode) {
  */
 export function render(vnode: IVnode | null, container: IContainer) {
   if (vnode) {
-    patch(container._vnode, vnode, container)
+    patch(container._vnode || null, vnode, container)
   } else {
     // 卸载
     if (container._vnode) {
