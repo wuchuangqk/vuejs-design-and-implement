@@ -137,6 +137,7 @@ export function trigger(target: Object, p: string, triggerType: string) {
     if (effectFnSet) {
       effectFnList = effectFnList.concat(Array.from(effectFnSet) as IFnWrap[])
     }
+    // 添加删除对应for in
     if (triggerType === TriggerType.ADD || triggerType === TriggerType.DELETE) {
       // 取出ITERATE_KEY的依赖集合
       effectFnSet = targetMap.get(ITERATE_KEY)
@@ -177,6 +178,7 @@ function cleanupDeps(fnWrap: any) {
 const ITERATE_KEY = Symbol()
 /**
  * 为对象设置一层代理，在读取和设置对象的每个属性时，添加额外的处理逻辑
+ * Reflect用来修正this指向
  * @param obj 
  * @param isShallow 是否浅层次遍历，默认深层次遍历每一个属性
  * @returns 被代理后的对象（非原对象）
@@ -210,7 +212,8 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
       }
       return result
     },
-    // 取出并执行依赖
+    // 拦截写入操作
+    // 当触发修改操作时，会一并触发这个变量关联的副作用函数
     set(target, p: string, newValue, receiver) {
       const oldValue = target[p]
       // 判断是添加新属性还是修改已有的属性
@@ -238,19 +241,24 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
       }
       return result
     },
-    // 拦截has访问器，用于 'name' in obj
+    // 拦截has访问器，用于 in 操作符，如 'age' in people
     has(target, p: string) {
       track(target, p)
       return Reflect.has(target, p)
     },
+    // 拦截for in
     ownKeys(target) {
+      // for in里获取不到具体操作的是哪个属性，所以只能用一个唯一key来作为属性
       track(target, ITERATE_KEY)
       return Reflect.ownKeys(target)
     },
+    // 拦截删除操作
     deleteProperty(target, p: string) {
       // 检查对象里有没有这个属性
       const hasKey = Object.prototype.hasOwnProperty.call(target, p)
+      // 是否删除成功
       const result = Reflect.deleteProperty(target, p)
+      // 当属性从对象中被删除时，也要触发相应的副作用函数
       if (hasKey && result) {
         trigger(target, p, TriggerType.DELETE)
       }

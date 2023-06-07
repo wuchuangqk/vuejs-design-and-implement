@@ -4,18 +4,24 @@ interface IWatchOptions {
   immediate?: boolean // 立即执行
   flush?: 'sync' | 'post' // 回调的执行时机：sync同步执行，post把回调放到一个微任务队列
 }
-type Callback = (newVal: any, oldValue: any) => void;
-let oldValue: any, newValue
+type Callback = (newVal: any, oldValue: any, onInvalidate: (fn: Function) => void) => void;
 /**
  * watch
  * @param source 可以是getter，也可以是响应式对象
  * @param callback 用户自定义的处理函数
  */
 function useWatch(source: Function | Object, callback: Callback, options: IWatchOptions = {}) {
+  let oldValue: any, newValue
+  // 用户注册的过期回调
+  let cleanupFn: Function | undefined
+  const invalidate = (fn: Function) => {
+    cleanupFn = fn
+  }
   const job = () => {
     newValue = effectFn()
+    if (cleanupFn) cleanupFn()
     // 当依赖发生变化时，调用callback
-    callback(newValue, oldValue)
+    callback(newValue, oldValue, invalidate)
     // 更新旧值
     oldValue = newValue
   }
