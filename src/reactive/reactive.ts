@@ -3,9 +3,11 @@ export const TriggerType = {
   ADD: 'ADD', // 添加新属性
   DELETE: 'DELETE', // 删除属性
 }
-
+const KEYS = {
+  ARRAY_LENGTH: 'length'
+}
 // 用一个全局变量存储被注册的副作用函数
-let activeFnWrap: Function | any
+let activeFnWrap: IFnWrap | any
 /**
  * 副作用栈，用以修正在嵌套副作用函数下，activeFnWrap只会指向最内层副作用函数的问题
  * 当一个副作用函数执行时，将其推入栈顶
@@ -77,7 +79,9 @@ export function useEffect(fn: Function, options: IOptions = {}) {
  *  - 即使对象已不再使用，Map仍保留对象的引用，所以垃圾回收器无法回收这个对象
  *  - 而WeakMap是弱引用，不会一直保留对象的引用，垃圾回收器能及时清理掉这个对象
  */
-const depsMap = new WeakMap<Object, Map<string | symbol, Set<Function>>>()
+const depsMap = new WeakMap<Object, Map<string | symbol, Set<IFnWrap>>>()
+const ITERATE_KEY = Symbol()
+const proxyObjectMap = new WeakMap<Object, Object>()
 
 /**
  * 在对象的属性与副作用函数之间建立映射关系
@@ -116,27 +120,32 @@ export function track(target: Object, p: string | symbol) {
  * @param p 被更改的属性
  * @param triggerType 是添加新属性还是修改已有的属性
  */
-export function trigger(target: Object, p: string, triggerType: string) {
+export function trigger(target: Object, p: string, triggerType: string, newValue: any) {
   const targetMap = depsMap.get(target)
   // 如果这个对象没有建立依赖图谱，就不执行任何操作
   if (typeof (targetMap) === 'undefined') return
 
   let effectFnList: IFnWrap[] = []
+  let effectFnSet: Set<IFnWrap> | undefined
+  // 从targetMap里取出这个字段的依赖集合
+  effectFnSet = targetMap.get(p)
+  if (effectFnSet) {
+    effectFnList = effectFnList.concat(Array.from(effectFnSet))
+  }
   // 处理数组
   if (Array.isArray(target)) {
-    if (triggerType === TriggerType.ADD) {
-      let enhancedEffectFn = targetMap.get('length')
-      if (enhancedEffectFn) {
-        effectFnList = effectFnList.concat(Array.from(enhancedEffectFn) as IFnWrap[])
-      }
+    // 触发与length相关的副作用函数
+    if (p === KEYS.ARRAY_LENGTH) {
+      // 对于索引大于或等于新的 length 值的元素，
+      // 需要把所有相关联的副作用函数取出并添加到 effectFnList 中待执行
+      targetMap.forEach((val: Set<IFnWrap>, key) => {
+        if (typeof key === 'string' && Number(key) >= newValue) {
+          effectFnList = effectFnList.concat(Array.from(val))
+        }
+      })
     }
   } else {
     // 处理对象
-    // 从targetMap里取出这个字段的依赖集合
-    let effectFnSet = targetMap.get(p)
-    if (effectFnSet) {
-      effectFnList = effectFnList.concat(Array.from(effectFnSet) as IFnWrap[])
-    }
     // 添加删除对应for in
     if (triggerType === TriggerType.ADD || triggerType === TriggerType.DELETE) {
       // 取出ITERATE_KEY的依赖集合
@@ -175,16 +184,19 @@ function cleanupDeps(fnWrap: any) {
   fnWrap.depSets.length = 0
 }
 
-const ITERATE_KEY = Symbol()
 /**
  * 为对象设置一层代理，在读取和设置对象的每个属性时，添加额外的处理逻辑
  * Reflect用来修正this指向
  * @param obj 
  * @param isShallow 是否浅层次遍历，默认深层次遍历每一个属性
+ * @param isReadonly 是否只读
  * @returns 被代理后的对象（非原对象）
  */
-function createReactive<T extends object>(obj: T, isShallow: boolean = false): T {
-  return new Proxy(obj, {
+function createReactive<T extends object>(obj: T, isShallow: boolean = false, isReadonly: boolean = false): T {
+  // 做一步优化，如果已经为obj创建的代理对象，则不再创建
+  let proxyObject = proxyObjectMap.get(obj) as T
+  if (proxyObject) return proxyObject
+  proxyObject = new Proxy(obj, {
     /**
      * 拦截读取操作
      * 收集依赖
@@ -199,7 +211,11 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
         return target
       }
       // 追踪(收集)依赖
-      track(target, p)
+      // 只读对象，无需追踪依赖
+      // 书中提到：不应该在副作用函数与 Symbol.iterator 这类symbol 值之间建立响应联系
+      if (!isReadonly && typeof p !== 'symbol') {
+        track(target, p)
+      }
       const result = Reflect.get(target, p, receiver)
 
       // 浅层级：直接返回结果
@@ -208,20 +224,28 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
       }
       // 深层级：如果结果是个对象，递归对结果进行代理操作，使其也具有响应式能力
       if (typeof result === 'object' && result !== null) {
-        return createReactive(result)
+        return isReadonly ? useReadonly(result) : createReactive(result)
       }
       return result
     },
     // 拦截写入操作
     // 当触发修改操作时，会一并触发这个变量关联的副作用函数
     set(target, p: string, newValue, receiver) {
+      if (isReadonly) {
+        console.warn(`${p}是只读属性`);
+        return true
+      }
       const oldValue = target[p]
       // 判断是添加新属性还是修改已有的属性
       let triggerType = ''
       // 处理数组
       if (Array.isArray(target)) {
         // 设置的索引小于数组长度视为赋值操作，大于数组长度视为新增操作
-        triggerType = Number(p) < target.length ? TriggerType.SET : TriggerType.ADD
+        if (p === KEYS.ARRAY_LENGTH) {
+          triggerType = TriggerType.SET
+        } else {
+          triggerType = Number(p) < target.length ? TriggerType.SET : TriggerType.ADD
+        }
       } else {
         // 处理对象
         triggerType = Object.prototype.hasOwnProperty.call(target, p) ? TriggerType.SET : TriggerType.ADD
@@ -233,10 +257,10 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
         if (triggerType === TriggerType.SET) {
           // 处理NaN(两个NaN是不相等的)
           if (newValue !== oldValue && (newValue === newValue || oldValue === oldValue)) {
-            trigger(target, p, triggerType)
+            trigger(target, p, triggerType, newValue)
           }
         } else {
-          trigger(target, p, triggerType)
+          trigger(target, p, triggerType, newValue)
         }
       }
       return result
@@ -248,23 +272,33 @@ function createReactive<T extends object>(obj: T, isShallow: boolean = false): T
     },
     // 拦截for in
     ownKeys(target) {
-      // for in里获取不到具体操作的是哪个属性，所以只能用一个唯一key来作为属性
-      track(target, ITERATE_KEY)
+      // 对于数组的话，直接用length
+      if (Array.isArray(target)) {
+        track(target, KEYS.ARRAY_LENGTH)
+      } else {
+        // for in里获取不到具体操作的是哪个属性，所以只能用一个唯一key来作为属性
+        track(target, ITERATE_KEY)
+      }
       return Reflect.ownKeys(target)
     },
     // 拦截删除操作
     deleteProperty(target, p: string) {
+      if (isReadonly) {
+        console.warn(`${p}是只读属性`);
+        return true
+      }
       // 检查对象里有没有这个属性
       const hasKey = Object.prototype.hasOwnProperty.call(target, p)
       // 是否删除成功
       const result = Reflect.deleteProperty(target, p)
       // 当属性从对象中被删除时，也要触发相应的副作用函数
       if (hasKey && result) {
-        trigger(target, p, TriggerType.DELETE)
+        trigger(target, p, TriggerType.DELETE, null)
       }
       return result
     },
   })
+  return proxyObject
 }
 /**
  * 深层次遍历对象，为每个属性设置监听事件
@@ -283,3 +317,46 @@ export function useShallowReactive<T extends object>(obj: T): T {
   return createReactive(obj, true)
 }
 
+export function useReadonly<T extends object>(obj: T): T {
+  return createReactive(obj, false, true)
+}
+export function useShallowReadonly<T extends object>(obj: T): T {
+  return createReactive(obj, true, true)
+}
+
+export function useRef(val: any) {
+  const wrapper = {
+    value: val
+  }
+  // 定义一个不可枚举的私有属性，来标识这是原始值
+  // 而非一个对象 reactive({ value: 1 })
+  // 用来自动脱ref
+  Object.defineProperty(wrapper, '_ref', {
+    value: true
+  })
+  return useReactive(wrapper)
+}
+
+export function useToRef(obj: any, key: any) {
+  const wrapper = {
+    get value() {
+      return obj[key]
+    },
+    set value(val) {
+      obj[key] = val
+    }
+  }
+  Object.defineProperty(wrapper, '_ref', {
+    value: true
+  })
+  return wrapper
+}
+export function useToRefs(obj: any) {
+  const ret: any = {}
+  // 使用 for...in 循环遍历对象
+  for (const key in obj) {
+    // 逐个调用 toRef 完成转换
+    ret[key] = useToRef(obj, key)
+  }
+  return ret
+}

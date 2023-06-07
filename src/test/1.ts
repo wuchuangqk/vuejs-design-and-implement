@@ -1,19 +1,20 @@
-import { useReactive, useEffect } from '../reactive/reactive'
+import { useReactive, useEffect, useRef } from '../reactive/reactive'
 import { useWatch } from '../reactive'
 
 const btn = document.querySelector('#btn')
 const btn2 = document.querySelector('#btn2')
 const app = document.querySelector('#app') as HTMLElement
-const stu = useReactive({ firstName: '张', lastName: '三' })
+const input = document.querySelector('#input') as HTMLInputElement
+const stu = useRef('我是学生')
 
-// useEffect(function effect() {
-//   app.innerHTML = `我的名字是${name.value}`
-// })
-btn?.addEventListener('click', () => {
-  stu.lastName = '四'
-  stu.firstName = '王'
+useEffect(function effect() {
+  app.innerHTML = stu.value
+
 })
-useWatch(stu, () => {
-  console.log('进行了网络请求');
-  app.innerHTML = `${stu.firstName}${stu.lastName}`
-}, {flush: 'sync'})
+btn?.addEventListener('click', () => {
+  stu.value = input.value
+})
+// useWatch(stu, () => {
+//   console.log('进行了网络请求');
+//   app.innerHTML = `${stu.firstName}${stu.lastName}`
+// }, {flush: 'sync'})
