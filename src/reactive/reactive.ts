@@ -120,7 +120,7 @@ export function track(target: Object, p: string | symbol) {
  * @param p 被更改的属性
  * @param triggerType 是添加新属性还是修改已有的属性
  */
-export function trigger(target: Object, p: string, triggerType: string, newValue: any) {
+export function trigger(target: Object, p: string, triggerType: string, newValue?: any) {
   const targetMap = depsMap.get(target)
   // 如果这个对象没有建立依赖图谱，就不执行任何操作
   if (typeof (targetMap) === 'undefined') return
@@ -135,7 +135,7 @@ export function trigger(target: Object, p: string, triggerType: string, newValue
   // 处理数组
   if (Array.isArray(target)) {
     // 触发与length相关的副作用函数
-    if (p === KEYS.ARRAY_LENGTH) {
+    if (p === KEYS.ARRAY_LENGTH && typeof newValue !== 'undefined') {
       // 对于索引大于或等于新的 length 值的元素，
       // 需要把所有相关联的副作用函数取出并添加到 effectFnList 中待执行
       targetMap.forEach((val: Set<IFnWrap>, key) => {
@@ -360,3 +360,5 @@ export function useToRefs(obj: any) {
   }
   return ret
 }
+
+window.depsMap = depsMap
